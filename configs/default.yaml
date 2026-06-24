@@ -1,0 +1,52 @@
+project_name: DRA-Inspect
+seed: 42
+dataset:
+  name: mvtec_ad
+  root: data/mvtec
+  categories:
+    - bottle
+    - cable
+    - capsule
+    - hazelnut
+    - metal_nut
+output:
+  root: ./outputs
+  save_maps: true
+feature_extractor:
+  name: simple_patch
+  image_size: 256
+  patch_size: 16
+degradations:
+  train:
+    - clean
+    - noise
+    - blur
+    - light
+    - lowres
+    - jpeg
+    - color
+  test:
+    - clean
+    - noise
+    - blur
+    - light
+    - lowres
+    - jpeg
+    - color
+  severity: 1.0
+degradation_eval:
+  degradations:
+    - noise
+    - blur
+    - light
+    - lowres
+    - jpeg
+  severity: 1.0
+selector:
+  mode: rule_based
+  min_weight: 0.05
+calibration:
+  enabled: true
+  disagreement_scale: 0.35
+scoring:
+  topk_ratio: 0.1

@@ -1,0 +1,32 @@
+project_name: DRA-Inspect
+seed: 42
+dataset:
+  roots:
+    eurosat: data/eurosat
+    resisc45: data/resisc45
+  protocol:
+    train_ratio: 0.8
+    max_anomaly_test_samples_per_class:
+output:
+  root: ./outputs
+  save_maps: false
+feature_extractor:
+  name: wide_resnet50_patchcore
+  image_size: 224
+  pretrained: true
+  layers:
+    - layer2
+    - layer3
+patchcore:
+  device: cuda
+  coreset_sampling_ratio: 0.1
+  nn_chunk_size: 2048
+  topk_ratio: 0.1
+degradation_eval:
+  degradations:
+    - noise
+    - blur
+    - light
+    - lowres
+    - jpeg
+  severity: 1.0

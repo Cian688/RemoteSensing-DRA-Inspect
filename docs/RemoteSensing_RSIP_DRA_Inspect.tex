@@ -1,0 +1,781 @@
+\documentclass[remotesensing,article,submit,pdftex,moreauthors]{Definitions/mdpi}
+
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{placeins}
+\setlength{\headheight}{20pt}
+
+\firstpage{1}
+\makeatletter
+\setcounter{page}{\@firstpage}
+\makeatother
+\pubvolume{1}
+\issuenum{1}
+\articlenumber{0}
+\pubyear{2026}
+\copyrightyear{2026}
+\datereceived{}
+\daterevised{}
+\dateaccepted{}
+\datepublished{}
+
+\Title{DRA-Inspect: Reliability-Calibrated Memory-Based Anomaly Detection for Degraded Remote Sensing Imagery}
+
+\Author{Qian Cheng $^{1,*}$, Xianwei Gao $^{1,*}$, Yitong Li $^{1}$, Meici Liu $^{1}$, Yijia Dai $^{1}$, Zhao Wang $^{1}$, Runze Zhou $^{1}$, Maosheng He $^{1}$, Mingjing Zhao $^{1}$ and Jianxin Wang $^{1}$}
+\AuthorNames{Qian Cheng, Xianwei Gao, Yitong Li, Meici Liu, Yijia Dai, Zhao Wang, Runze Zhou, Maosheng He, Mingjing Zhao and Jianxin Wang}
+\address{%
+$^{1}$ \quad Beijing Electronic Science and Technology Institute, Beijing, China; 20243812@mail.besti.edu.cn (Q.C.); gaoxianwei@besti.edu.cn (X.G.); 20243915@mail.besti.edu.cn (Y.L.); 20242940@mail.besti.edu.cn (M.L.); 20242906@mail.besti.edu.cn (Y.D.); 20243821@mail.besti.edu.cn (Z.W.); 20243816@mail.besti.edu.cn (R.Z.); 20243809@mail.besti.edu.cn (M.H.); zmj@besti.edu.cn (M.Z.); wangjianxin@besti.edu.cn (J.W.)}
+\corres{Correspondence: 20243812@mail.besti.edu.cn (Q.C.); gaoxianwei@besti.edu.cn (X.G.)}
+
+\addhighlights{yes}
+\renewcommand{\addhighlights}{
+\vspace{3pt}\\
+\textbf{What are the main findings?}
+\begin{itemize}[labelsep=2.5mm,topsep=-3pt]
+\item DRA-Inspect is a reliability-calibrated memory-based framework for scene-level anomaly detection in degraded remote sensing imagery.
+\item It improves fixed-threshold robustness by combining degradation-enriched normality memory with quantile-based score calibration, without adding learnable parameters.
+\item Experiments on EuroSAT-Hard and supporting NWPU-Hard validation show fewer corruption-induced false alarms and more stable thresholded decisions.
+\end{itemize}\vspace{3pt}
+\textbf{What are the implications of the main findings?}
+\begin{itemize}[labelsep=2.5mm,topsep=-3pt]
+\item The study shows that deployment-oriented remote sensing anomaly detection should be assessed not only by ranking metrics, but also by threshold stability under degradation.
+\item The proposed training-free strategy offers a practical option for remote sensing systems that must operate reliably under changing acquisition conditions.
+\end{itemize}
+}
+
+\abstract{Remote sensing monitoring often relies on fixed alarm thresholds, yet non-semantic imaging degradations can shift anomaly-score distributions of normal image tiles and trigger false alarms. This paper studies scene-level anomaly detection for remote sensing image tiles under degraded imaging, rather than pixel-level hyperspectral anomaly localization. We present DRA-Inspect, a deployment-oriented reliability enhancement for PatchCore-style memory-based anomaly detection with no additional learnable parameters. DRA-Inspect combines degradation-enriched normality memory with reliability-calibrated anomaly scoring based on a held-out normal calibration split. On EuroSAT-Hard, averaged over three hard-scene protocols and five degradations, DRA-Inspect slightly improves average AUROC from 0.9582 to 0.9622. Under the clean-reference threshold, DRA-Inspect-CF reduces fixed-threshold false positive rate from 0.0573 to 0.0221. Under corruption-agnostic calibration, DRA-Inspect-AC recovers part of the true positive rate and fixed-threshold F1 lost by the conservative mixed-memory setting, increasing TPR from 0.5056 to 0.6546 and fixed-threshold F1 from 0.6198 to 0.7388 while keeping FPR below PatchCore-AC. Multi-seed, paired-bootstrap, equal-size, and coreset-ratio analyses indicate that the ranking gain is modest but stable, that the false-positive reduction is more clearly separated, and that much of the effect remains under memory compression. Together with NWPU-Hard, PaDiM, and cross-domain MVTec evidence, these results support a restrained interpretation of DRA-Inspect as a training-free fixed-threshold reliability enhancement rather than a universal detector replacement.}
+
+\keyword{remote sensing anomaly detection; imaging degradation; fixed-threshold reliability; normality memory; score calibration}
+
+\begin{document}
+
+\section{Introduction}
+Remote sensing imagery plays an important role in land-cover monitoring, urban analysis, disaster assessment, environmental surveillance, and infrastructure inspection. In many operational scenarios, abnormal or unexpected observations are rare and diverse, while clean normal observations are relatively easier to collect. This makes one-class and memory-based anomaly detection attractive for remote sensing monitoring, especially when dense anomaly labels are expensive or unavailable. In this paper, the monitored unit is a remote sensing image tile or scene patch rather than a pixel-level hyperspectral anomaly map.
+
+In practical remote sensing monitoring, anomaly detectors are often used as screening tools rather than as final decision makers. A fixed alarm threshold is selected from historical data or a validation period and is then reused to prioritize suspicious image tiles for human inspection or downstream processing. This deployment pattern makes threshold stability important: even when an anomaly detector preserves a high AUROC, a shift in the score distribution of degraded but normal tiles can still generate many false alarms. Therefore, the central question in this paper is not only whether semantic anomalies can be ranked above normal scenes, but also whether a fixed threshold remains reliable when the imaging condition changes.
+
+However, remote sensing images are frequently affected by non-semantic imaging degradations, including sensor noise, optical blur, illumination and atmospheric variation, spatial-resolution mismatch, and compression artifacts~\cite{robustness,rsrobustsurvey,reobench,satanomreview}. These degradations do not necessarily indicate true semantic anomalies, but they can shift the anomaly-score distribution of normal image tiles. As a result, thresholds selected under clean conditions may produce excessive false alarms during degraded deployment.
+
+Most existing visual anomaly detection studies emphasize ranking-oriented metrics such as AUROC. Strong memory-based methods such as PatchCore~\cite{patchcore} and distribution-modeling methods such as PaDiM~\cite{padim} achieve strong clean-benchmark ranking performance, while recent deployment analyses in industrial anomaly detection further highlight the practical gap between benchmark ranking and operational reliability~\cite{bestpractices}. Yet operational remote sensing systems often rely on fixed thresholds to trigger alarms, and high AUROC alone does not guarantee stable threshold behavior under degraded imaging conditions.
+
+We address this deployment problem with DRA-Inspect, which combines degradation-enriched normality memory and reliability-calibrated anomaly scoring. The memory component broadens normal support using clean and degraded normal samples, while the calibration component uses held-out normal quantiles to stabilize fixed-threshold decisions without requiring test-time degradation labels. The primary remote sensing study in this paper is conducted on EuroSAT-Hard, NWPU-Hard is used as a second remote sensing benchmark with aligned degradation-family coverage, PaDiM is included as a strong external detector baseline on EuroSAT-Hard, and MVTec AD is retained only as cross-domain supporting evidence showing that the same memory-calibration principle transfers to industrial inspection. The paper should therefore be read as a scene-level remote sensing deployment reliability study rather than as a new universal detector architecture. Our main contributions are:
+
+\begin{enumerate}
+\item We formulate scene-level remote sensing image-tile anomaly detection under fixed-threshold deployment, focusing on score drift and false alarms caused by common non-semantic imaging degradations rather than on pixel-level hyperspectral anomaly localization.
+\item We propose degradation-enriched normality memory, a training-free memory enhancement that broadens the support of normal remote sensing tiles under degraded imaging and naturally provides a conservative low-false-alarm operating mode.
+\item We introduce corruption-label-agnostic $q_{50}/q_{95}$ quantile calibration to reposition the fixed-threshold decision boundary under mixed memory, and analyze its behavior through threshold sensitivity, calibration baselines, multi-seed stability, paired bootstrap confidence intervals, and equal-size memory control.
+\item We validate the resulting cost--reliability trade-off on EuroSAT-Hard, an extended NWPU-Hard secondary benchmark with aligned degradation-family coverage, a strong PaDiM external detector baseline, unseen-severity and unseen-family transfer tests, compact-memory sensitivity, and cross-domain MVTec AD validation.
+\end{enumerate}
+
+\section{Related Work}
+\subsection{Remote Sensing Image Anomaly Detection}
+Remote sensing anomaly detection spans at least two partially connected research lines. The first line is hyperspectral anomaly detection, where anomalies are defined as spectrally rare targets against structured background clutter. Recent work in this line includes surveys and comparative analyses of detector behavior~\cite{hyperspectralsurvey,hsicomparison}, as well as newer reconstruction or masked-autoencoder pipelines~\cite{hsisscmae}. The second line is scene-level novelty, open-set, and out-of-distribution (OOD) detection for remote sensing image classification, where the challenge is to reject semantically unknown or distribution-shifted image tiles rather than to localize spectrally rare pixels. Representative studies include Dirichlet-prior and open-set adaptation formulations~\cite{rsdpnood,rsopenset}, nearest-neighbor and evaluation-oriented OOD analyses~\cite{rsnnood,rsoddeval}, and recent reviews or lightweight open-set recognizers for remote sensing scenes and SAR imagery~\cite{zsrssc,liosrsar}. Our setting is closer to the second line because we study scene tiles from land-use and land-cover benchmarks, but it differs from standard OOD work in one crucial respect: the dominant failure mode is not only unseen semantics, but also non-semantic imaging degradation that shifts normal scores and destabilizes fixed thresholds.
+
+The choice of scene-level protocols in this paper is also motivated by the remote sensing scene-classification literature. EuroSAT~\cite{eurosat} and NWPU-RESISC45~\cite{resisc45} remain two of the most widely used benchmarks for land-use and scene understanding. Broader reviews emphasize that high within-class diversity and between-class similarity already make open-world deployment difficult~\cite{rsscenereview}. Recent studies on noisy-label learning and multilevel fusion scene classification further highlight how easily related categories can overlap in appearance and semantics~\cite{noisyrs,dualmodelscene}. These properties directly motivate our hard-scene anomaly construction, where false alarms arise among semantically or visually related categories rather than from trivially distinct one-vs-rest negatives.
+
+Most existing remote sensing anomaly studies focus on detecting rare spectral targets, rejecting semantically unknown scenes, or improving open-set recognition. By contrast, our setting emphasizes a different deployment failure mode: normal scene tiles may remain semantically normal but become visually degraded, causing their anomaly scores to drift across a fixed alarm threshold. This distinction motivates our use of hard scene-level protocols, where anomalies are semantically related to normal classes and false alarms under degradation are non-trivial.
+
+\subsection{Robust Remote Sensing Image Interpretation under Degradation}
+Robustness under corruption and distribution shift has been studied extensively in recognition and, increasingly, in remote sensing interpretation. Recent remote sensing studies on object detection, scene interpretation, and rapid surface-anomaly monitoring show that noise, blur, compression, and resolution changes can sharply degrade both recognition accuracy and uncertainty quality~\cite{rsyolorobust,rsuda,realtimessa}. This evidence is important for anomaly detection because many operational remote sensing systems do not fail by completely losing semantic ranking; instead, they fail when the score scale of nominal images drifts under degraded acquisition and breaks a threshold chosen on cleaner data. Our work therefore focuses on corruption-induced score drift and fixed-threshold false alarms rather than on corruption-robust classification accuracy alone.
+
+This distinction is important because corruption robustness in classification is usually evaluated by accuracy degradation or robustness curves, whereas anomaly monitoring additionally depends on the calibration of the score scale. A detector may still assign higher scores to anomalous scenes on average, but if the normal-score distribution shifts upward under blur, haze, compression, or resolution loss, a threshold selected under cleaner conditions can become unreliable. Our study therefore treats imaging degradation as a threshold reliability problem rather than only as a recognition robustness problem.
+
+\subsection{Memory-Based Visual Anomaly Detection}
+Memory-based and patch-level anomaly detection methods provide strong baselines for one-class visual monitoring. PatchCore~\cite{patchcore} and PaDiM~\cite{padim} remain representative baselines for feature-memory and patch-distribution modeling. Reconstruction, distillation, and representation-learning variants such as DRAEM~\cite{draem}, RD4AD~\cite{rd4ad}, and ReConPatch~\cite{reconpatch} further expand the design space. Lightweight or generalized variants including SimpleNet~\cite{simplenet}, AnomalyDINO~\cite{anomalydino}, and UniVAD~\cite{univad} show that strong performance can also be pursued through simplification or training-free design. Normalizing-flow methods such as CFLOW-AD~\cite{cflowad}, FastFlow~\cite{fastflow}, and RD++~\cite{rdpp} highlight the importance of efficient dense scoring. Recent vision-language and prompt-based approaches, including WinCLIP~\cite{winclip}, AnomalyCLIP~\cite{anomalyclipiclr}, PromptAD~\cite{promptad}, InCTRL~\cite{inctrl}, and AnomalyGPT~\cite{anomalygpt}, broaden anomaly detection toward few-shot, zero-shot, and instruction-aware settings. Our work does not replace these detectors with a new retrained model; instead, it modifies the support of normality in memory space and calibrates score scales for fixed-threshold use.
+
+\subsection{Score Calibration and Fixed-Threshold Reliability}
+Score calibration is widely used to make model outputs more reliable for downstream decisions~\cite{calibrationnn}. In anomaly detection, however, calibration is often treated as secondary to ranking-based metrics. This leaves a practical gap for remote sensing and industrial monitoring systems that trigger alarms through fixed thresholds. Recent calibration work and open-world reliability analyses further emphasize that distribution-shift robustness cannot be reduced to ranking quality alone~\cite{recalibmodern,openrealworld}. Generalized OOD surveys make a similar point from a broader detection perspective~\cite{genoodsurvey}. Recent visual anomaly detection surveys also emphasize deployment-oriented evaluation, false-positive control, and the distinction between ranking quality and decision reliability~\cite{vadsurvey}. The present work uses held-out normal quantiles specifically to stabilize fixed-threshold decisions rather than to improve ranking metrics.
+
+The calibration problem considered here is different from probability calibration for supervised classifiers. Anomaly scores are not class probabilities, and our objective is not to estimate calibrated semantic confidence. Instead, we use held-out normal-score statistics to obtain a stable operating point for fixed-threshold decisions. This makes the calibration step closer to deployment-oriented score normalization than to post-hoc probability calibration.
+
+\subsection{Efficient Memory Retrieval for Deployment}
+Deployment-oriented anomaly detection must balance reliability gains against storage and nearest-neighbor retrieval cost. Efficient anomaly detection pipelines highlight the value of compact designs, while industrial deployment studies also emphasize realistic computational reporting. This consideration is equally important for remote sensing monitoring, where large archives and many scene categories can make memory expansion non-trivial.
+
+For memory-based anomaly detection, the reliability benefit of a broader memory bank must therefore be weighed against the cost of storing and searching additional feature vectors. This trade-off is particularly relevant for remote sensing archives, where scene tiles may be generated at large scale from repeated acquisitions or sliding-window processing. This cost issue is closely related to low-latency anomaly detection design~\cite{efficientad} and scalable approximate nearest-neighbor retrieval with GPU similarity search~\cite{faiss}. We therefore report memory and latency costs and further analyze compact coreset settings to show whether the reliability effect can be retained under reduced memory budgets.
+
+\section{Method}
+\subsection{Problem Setting}
+Let $x$ denote a remote sensing image tile and let $\phi(x)$ denote its patch-level feature representation extracted by a frozen backbone. Training data contain only normal tiles $x \in \mathcal{D}_{\text{train}}^{\text{normal}}$. At deployment time, test tiles may be affected by degradations such as noise, blur, illumination or atmospheric shift, spatial-resolution loss, and compression artifacts. The goal is to distinguish true semantic anomalies from non-semantic imaging degradation under fixed-threshold deployment. Accordingly, the output of interest is an image-tile anomaly score for alarm triggering rather than a pixel-level anomaly map.
+
+\subsection{Degradation-Enriched Normality Memory}
+Conventional memory-based anomaly detection builds a memory bank only from clean normal tiles. We denote this clean-only bank as
+\begin{equation}
+\mathcal{M}_{\text{clean}} = \{\phi(x) \mid x \in \mathcal{D}_{\text{train}}^{\text{normal}}\}.
+\end{equation}
+Under degraded deployment, this bank may not sufficiently cover degraded but still normal tiles. To enlarge the support of normality, we construct degraded normal variants
+\begin{equation}
+\tilde{x}^{(d)} = T_d(x), \quad d \in \{\text{noise}, \text{blur}, \text{light}, \text{lowres}, \text{jpeg}\},
+\end{equation}
+where $T_d(\cdot)$ denotes a synthetic degradation operator. We then build a mixed degradation-enriched memory bank:
+\begin{equation}
+\mathcal{M}_{\text{mixed}}
+=
+\bigcup_{d \in \mathcal{D}}
+\left\{
+\phi(T_d(x)) \mid x \in \mathcal{D}_{\text{normal}}^{\text{mem}}
+\right\},
+\quad
+\mathcal{D}=\{\text{clean},\text{noise},\text{blur},\text{light},\text{lowres},\text{jpeg}\}.
+\end{equation}
+Given a test patch feature $f_i$, its anomaly score is computed by nearest-neighbor distance to the memory bank:
+\begin{equation}
+s_i = \min_{m \in \mathcal{M}} \| f_i - m \|_2.
+\end{equation}
+The image-level score is obtained by aggregating patch-level distances as in standard PatchCore-style scoring. The key benefit comes from expanding normal support, not from hard routing to a single degradation bank.
+
+\subsection{Reliability-Calibrated Anomaly Scoring}
+Mixed memory improves ranking robustness, but degraded deployment still causes score-scale drift across corruption types. To stabilize thresholding, we reserve a held-out subset of normal training tiles as a calibration set; these images are never inserted into the memory bank. Let the normal training split be divided class-wise into a memory subset and a disjoint held-out calibration subset, while all test tiles remain unseen during both memory construction and calibration. We use three threshold protocols in the experiments. First, a \emph{clean-reference fixed threshold} $T_{\text{raw}}$ is obtained as the $95$th percentile of raw scores on held-out clean normal tiles under the same memory design. This threshold is then applied to degraded normal test tiles to measure how severely clean deployment thresholds break under degradation. Second, for calibrated evaluation we pool held-out normal scores from the considered degradation set without using test-time corruption labels, estimate the median and upper quantile,
+\begin{equation}
+q_{50} = Q_{50}(s_{\text{normal}}), \qquad q_{95} = Q_{95}(s_{\text{normal}}).
+\end{equation}
+We then calibrate any raw score $s$ by
+\begin{equation}
+s^{\mathrm{cal}} = \frac{s - q_{50}}{q_{95} - q_{50} + \epsilon}.
+\end{equation}
+where $\epsilon$ is a small constant for numerical stability.
+This transform is monotonic, so it does not change AUROC or F1-max. Instead, it aligns score scales across degradations and improves threshold reliability. In deployment, the calibrated threshold is fixed at approximately $1.0$, which corresponds to the $95$th percentile of the held-out normal calibration scores after quantile normalization. All calibration is performed category-wise. In our benchmark protocols, this assumes that the monitored deployment stream has a predefined normal scene category and that calibration uses held-out normal tiles from that category. Our main protocol is corruption-agnostic at inference time because it does not use the test-time corruption label. For completeness, we also report a degradation-specific calibration protocol as a controlled reference rather than as a guaranteed empirical upper bound.
+Because the transformation is monotonic for fixed calibration statistics, it preserves ranking metrics such as AUROC and F1-max, but changes the behavior of fixed-threshold decisions.
+
+\subsection{Deployment Modes and Computational Implication}
+DRA-Inspect supports two deployment modes that correspond to different false-alarm requirements. The clean-reference mode, denoted as DRA-Inspect-CF in the experiments, applies a clean-reference threshold to the mixed-memory score space. This mode is intended for conservative false-alarm control, because the enlarged normality support tends to suppress scores of degraded normal tiles. However, it may also reduce recall when the threshold becomes overly conservative. The corruption-agnostic calibrated mode, denoted as DRA-Inspect-AC, applies $q_{50}/q_{95}$ normalization estimated from the held-out normal calibration split. This mode is intended to recover part of the recall and F1 lost by the conservative mixed-memory threshold while still operating under a fixed threshold and without using test-time corruption labels. These two modes should be interpreted as deployment choices along a false-alarm/recall trade-off rather than as universally dominant operating points.
+
+The main cost of DRA-Inspect comes from the expanded memory bank. If the clean-only memory retains $K$ patch vectors after coreset sampling and five degraded variants are added together with the clean samples, the mixed memory contains approximately six times more candidate vectors before compact-memory reduction. DRA-Inspect therefore introduces no additional learnable parameters or retraining stage, but it increases storage and nearest-neighbor retrieval cost. This motivates the runtime reporting and coreset-ratio sensitivity analysis in the experiments, where smaller retained memory banks are used to examine the cost--reliability trade-off.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/Cian_0623.png}
+\caption{Remote sensing deployment framework of DRA-Inspect. Clean and synthetically degraded normal tiles are encoded into clean or mixed normality memories, while a held-out normal calibration split estimates quantile statistics for corruption-agnostic score normalization. The resulting system supports two deployment modes under degraded imaging: conservative clean-reference thresholding and balanced corruption-agnostic calibrated thresholding. All image thumbnails are remote sensing scene tiles from the retained scene-level protocols.}
+\label{fig:framework-rs}
+\end{figure}
+
+\section{Experiments}
+\subsection{Experimental Setup}
+The primary remote sensing evaluation is conducted on EuroSAT-Hard, a hard-scene anomaly protocol built from three remote sensing scene pairs and five common imaging degradations. In each remote sensing setting, one scene category is treated as normal, the memory bank is built only from normal training tiles, and degraded testing evaluates whether non-semantic image corruption destabilizes fixed alarm thresholds. We additionally report a secondary NWPU-Hard validation built from three hard-scene protocols and the same five degradation families as EuroSAT-Hard to test whether the same memory-calibration behavior transfers to a second remote sensing benchmark under aligned corruption coverage. MVTec AD is used only as cross-domain validation to verify that the same principle also transfers to industrial inspection.
+
+EuroSAT is a Sentinel-2 land-use and land-cover benchmark with 27,000 labeled image patches from 10 classes. NWPU-RESISC45 is a larger aerial scene benchmark with 31,500 RGB images from 45 classes and is explicitly designed to exhibit strong within-class diversity and between-class similarity. In this manuscript, EuroSAT-Hard serves as the primary remote sensing benchmark, while NWPU-Hard is reported as a restrained but useful secondary validation on a harder aerial-scene distribution.
+
+We report image-level AUROC as the main ranking metric. To capture deployment reliability, we also evaluate fixed-threshold false positive rate (Fixed FPR), fixed-threshold true positive rate (Fixed TPR), fixed-threshold false negative rate (Fixed FNR), fixed-threshold F1, balanced accuracy, and the score gap. The score gap is defined as the difference between the mean anomaly score of anomalous test tiles and the mean anomaly score of normal test tiles,
+\begin{equation}
+\mathrm{Gap}=\mathbb{E}[s(x)\mid y=\mathrm{anomaly}]-\mathbb{E}[s(x)\mid y=\mathrm{normal}].
+\end{equation}
+A positive gap indicates that anomalous tiles receive higher anomaly scores on average. Gap values are therefore useful for interpreting score separation within the same score space, but raw-score and calibrated-score gaps should not be treated as absolute quantities on a shared scale. We compare three threshold protocols: clean-reference fixed threshold, corruption-agnostic calibration, and degradation-specific calibration. The clean-reference threshold is the clean held-out normal $Q_{95}$ under the same memory design, which simulates a threshold selected on clean deployment data and then reused under degraded testing. For calibrated scores, the threshold is fixed at $1.0$ after quantile normalization. The corruption-agnostic protocol is the main protocol because it is corruption-label-agnostic at inference time; degradation-specific calibration is reported only as a controlled reference. These operating-point metrics are more relevant than AUROC alone when remote sensing monitoring systems trigger alarms with fixed thresholds.
+
+\begin{table}[!htbp]
+\caption{Remote sensing degradation protocol and matched-severity setting used in the experiments. We use the same corruption severity for mixed-memory construction and degraded testing, and reserve unseen-severity analysis for a dedicated evaluation.}
+\label{tab:degradation-details}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.18\textwidth}>{\raggedright\arraybackslash}p{0.42\textwidth}>{\raggedright\arraybackslash}p{0.24\textwidth}}
+\hline
+Degradation & Remote-sensing interpretation & Default severity \\
+\hline
+Noise & sensor or atmospheric noise & Gaussian noise, $\sigma=8.0$ \\
+Blur & optical or motion blur & Gaussian blur, radius $=1.5$ px \\
+Illumination & illumination or atmospheric variation & brightness/contrast $(0.75, 0.90)$ \\
+Low resolution & spatial-resolution degradation & downsample/\\ upsample, scale $=1/3$ \\
+Compression & onboard or transmission compression & JPEG, quality $=45$ \\
+\hline
+\end{tabular}}
+\end{table}
+\vspace{-4pt}
+
+\noindent These degradations are not intended to reproduce full physical sensor or atmospheric processes. Instead, they serve as controlled non-semantic perturbations that emulate common score-drift factors in remote sensing deployment, including noise, blur, illumination variation, resolution mismatch, and compression artifacts.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\textwidth]{figures/figure2_eurosat_degradation_examples.png}
+\caption{Representative EuroSAT tile under the five degradation types considered in the remote sensing study. The degradations preserve scene semantics but alter local texture, contrast, resolution, and compression statistics, which is precisely the score-drift condition targeted by the fixed-threshold analysis.}
+\label{fig:degradation-examples-rs}
+\end{figure}
+
+\noindent\textbf{Implementation details.}
+We use a frozen ImageNet-pretrained WideResNet-50-2 backbone~\cite{imagenet,wideresnet} and extract patch features from \texttt{layer2} and \texttt{layer3}. Input images are resized to $224\times224$, and the memory bank is reduced with PatchCore-style coreset sampling at ratio $0.1$. Image-level anomaly scores are obtained by averaging the top 10\% largest patch distances. Unless otherwise stated, the main EuroSAT-Hard and NWPU-Hard tables use seed 42, class-wise 80/20 memory-calibration splits, and single-image inference. We additionally report EuroSAT-Hard seed stability over seeds 42, 43, and 45 to verify that the observed ranking and false-alarm trends are not caused by a single favorable split or coreset sample. Degradations are applied only to normal training tiles for memory construction and calibration, while both normal and anomalous test tiles are degraded during degraded evaluation.
+
+\subsection{EuroSAT-Hard Protocol}
+Rather than using a broad one-vs-rest remote sensing construction, we adopt three hard-scene protocols in which anomalies are selected from visually or semantically related scene types. This choice better reflects deployment scenarios where false alarms often occur among similar land-cover or infrastructure patterns under degraded imaging. The three protocols are \textit{vegetation\_forest} (normal: \textit{Forest}; anomalies: \textit{HerbaceousVegetation}, \textit{Pasture}, and \textit{AnnualCrop}), \textit{urban\_residential} (normal: \textit{Residential}; anomalies: \textit{Industrial} and \textit{Highway}), and \textit{water\_sealake} (normal: \textit{SeaLake}; anomaly: \textit{River}). We average the final EuroSAT-Hard results over these three protocols and the five degradations listed in Table~\ref{tab:degradation-details}.
+
+\subsection{Main Results on EuroSAT-Hard}
+Table~\ref{tab:eurosat-hard-main} reports the main remote sensing results averaged over three EuroSAT-Hard protocols and five degradations. DRA-Inspect improves the average ranking-oriented AUROC from 0.9582 to 0.9622, although the gain is protocol-dependent, which indicates that degradation-enriched memory broadens the support of normal remote sensing tiles under degraded imaging. Within the PatchCore-style memory pipeline used for the main 2$\times$2 comparison, the fixed-threshold results reveal two distinct operating modes. Under the clean-reference threshold, DRA-Inspect-CF reduces average Fixed FPR from 0.0573 to 0.0221, a relative reduction of about 61.4\%, but also reduces Fixed TPR, Fixed F1, and balanced accuracy. We therefore interpret this setting as a conservative false-alarm-control mode rather than as a globally optimal operating point.
+
+\begin{table}[!htbp]
+\caption{Average results over three EuroSAT-Hard protocols and five degradations. CF denotes clean-reference fixed-threshold deployment and AC denotes corruption-agnostic calibrated deployment.}
+\label{tab:eurosat-hard-main}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccc}
+\hline
+Method & AUROC & Gap & FPR & TPR & F1 & BAcc \\
+\hline
+PatchCore-CF & 0.9582 & 1.0098 & 0.0573 & 0.7148 & 0.8004 & 0.8287 \\
+PatchCore-AC & 0.9582 & 1.3401 & 0.0536 & 0.7261 & 0.8122 & 0.8363 \\
+DRA-Inspect-CF & \textbf{0.9622} & 1.2134 & \textbf{0.0221} & 0.5056 & 0.6198 & 0.7417 \\
+DRA-Inspect-AC & \textbf{0.9622} & 1.2735 & 0.0427 & 0.6546 & 0.7388 & 0.8059 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Corruption-agnostic calibration should not be interpreted as an additional ranking booster. Because the calibration transform is monotonic, AUROC remains unchanged, but the fixed-threshold operating point moves to a more balanced region under mixed memory. Relative to DRA-Inspect-CF, DRA-Inspect-AC recovers Fixed TPR from 0.5056 to 0.6546, Fixed F1 from 0.6198 to 0.7388, and balanced accuracy from 0.7417 to 0.8059 while still keeping Fixed FPR below PatchCore-AC. At the same time, DRA-Inspect-AC does not globally dominate PatchCore-AC on all fixed-threshold metrics. We therefore interpret DRA-Inspect as a deployment-oriented robustness enhancement that offers two operating modes: a conservative false-alarm-control mode and a balanced calibrated mode.
+
+\subsection{Seed and Bootstrap Stability Analysis}
+
+\begin{table}[!htbp]
+\caption{Seed stability on EuroSAT-Hard over seeds 42, 43, and 45. Values are reported as mean $\pm$ standard deviation over the averaged protocol-degradation results.}
+\label{tab:eurosat-hard-seed-stability}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lccccc}
+\hline
+Method & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+PatchCore-CF & 0.9593 $\pm$ 0.0013 & 0.0536 $\pm$ 0.0054 & 0.7165 $\pm$ 0.0120 & 0.8022 $\pm$ 0.0068 & 0.8315 $\pm$ 0.0044 \\
+PatchCore-AC & 0.9593 $\pm$ 0.0013 & 0.0503 $\pm$ 0.0030 & 0.7350 $\pm$ 0.0115 & 0.8191 $\pm$ 0.0078 & 0.8423 $\pm$ 0.0061 \\
+DRA-Inspect-CF & \textbf{0.9631 $\pm$ 0.0011} & \textbf{0.0196 $\pm$ 0.0015} & 0.5131 $\pm$ 0.0134 & 0.6284 $\pm$ 0.0116 & 0.7468 $\pm$ 0.0072 \\
+DRA-Inspect-AC & \textbf{0.9631 $\pm$ 0.0011} & 0.0409 $\pm$ 0.0027 & 0.6641 $\pm$ 0.0111 & 0.7471 $\pm$ 0.0093 & 0.8116 $\pm$ 0.0068 \\
+\hline
+\end{tabular}
+}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-seed-stability} shows that the main EuroSAT-Hard behavior is stable across seeds 42, 43, and 45. The AUROC gain of DRA-Inspect remains consistent in both CF and AC modes, DRA-Inspect-CF retains a clearly lower false-positive rate than PatchCore-CF, and DRA-Inspect-AC also maintains a lower average FPR than PatchCore-AC. We therefore do not attribute the main EuroSAT-Hard trends to a single favorable split, memory-calibration partition, or coreset sample.
+
+\begin{table}[!htbp]
+\caption{Matched-FPR and threshold-sensitivity analysis for the EuroSAT-Hard balanced calibrated mode. All values are averaged over three protocols and five degradations. The matched-FPR row uses one global pooled threshold selected over all mixed-memory EuroSAT-Hard test samples.}
+\label{tab:eurosat-hard-threshold-sensitivity}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccc}
+\hline
+Setting & FPR & TPR & F1 & BAcc \\
+\hline
+PatchCore-AC ($q_{95}$) & 0.0536 & 0.7261 & 0.8122 & 0.8363 \\
+DRA-Inspect-AC ($q_{90}$) & 0.0842 & 0.7989 & 0.8236 & 0.8573 \\
+DRA-Inspect-AC ($q_{92.5}$) & 0.0651 & 0.7532 & 0.8014 & 0.8441 \\
+DRA-Inspect-AC ($q_{95}$) & 0.0427 & 0.6546 & 0.7388 & 0.8059 \\
+DRA-Inspect-AC (matched FPR) & 0.0536 & 0.7106 & 0.8056 & 0.8285 \\
+DRA-Inspect-AC ($q_{97.5}$) & 0.0221 & 0.5050 & 0.6196 & 0.7414 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-threshold-sensitivity} directly addresses the concern that DRA-Inspect might reduce false alarms only by becoming more conservative. When a single global pooled threshold is selected to match the PatchCore-AC false-alarm budget at 0.0536, DRA-Inspect-AC reaches Fixed TPR 0.7106, Fixed F1 0.8056, and balanced accuracy 0.8285. These values remain close to, but slightly below, the default PatchCore-AC point under the same global false-alarm budget. We therefore do not interpret the matched-FPR result as evidence of a uniformly stronger operating curve. Instead, it serves as a diagnostic showing that the main value of q50/q95 calibration lies in exposing a controllable operating-point mechanism around the mixed-memory score space. The matched-FPR threshold is selected only for diagnostic comparison under an equal false-alarm budget and is not used as a deployable calibration rule.
+
+\noindent The quantile sweep also clarifies how the balanced calibrated mode should be interpreted in deployment. Lowering the calibration threshold from $q_{95}$ to $q_{92.5}$ or $q_{90}$ predictably trades higher FPR for improved recall and F1, while raising it to $q_{97.5}$ recovers the very conservative low-FPR regime at the cost of a large recall drop. In particular, DRA-Inspect-AC at $q_{90}$ reaches the highest average Fixed TPR and Fixed F1 in the sweep, whereas the default $q_{95}$ setting remains a more conservative compromise. We therefore treat corruption-agnostic calibration not as a single privileged threshold, but as a deployment mechanism that exposes a controllable FPR--TPR trade-off around the mixed-memory score space.
+
+\begin{table}[!htbp]
+\caption{Paired bootstrap delta analysis on EuroSAT-Hard using 1000 resamples over the pooled protocol-degradation test set. Confidence intervals directly compare DRA-Inspect against the corresponding PatchCore baseline.}
+\label{tab:eurosat-hard-bootstrap-ci}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lcccc}
+\hline
+Comparison & $\Delta$AUROC & $\Delta$FPR & $\Delta$F1 & $\Delta$BAcc \\
+\hline
+DRA-CF $-$ PatchCore-CF & +0.0040 [0.0031, 0.0051] & -0.0352 [-0.0387, -0.0315] & -0.1805 [-0.1881, -0.1734] & -0.0870 [-0.0914, -0.0830] \\
+DRA-AC $-$ PatchCore-AC & +0.0040 [0.0031, 0.0050] & -0.0109 [-0.0144, -0.0072] & -0.0734 [-0.0797, -0.0674] & -0.0303 [-0.0344, -0.0264] \\
+\hline
+\end{tabular}
+}
+\end{table}
+
+\noindent The paired bootstrap deltas strengthen this interpretation. We use pooled image-level paired bootstrap over the combined protocol-degradation test samples, so the confidence intervals should be read as a stability diagnostic for the averaged benchmark rather than as a full hierarchical uncertainty decomposition. In both CF and AC settings, the AUROC and FPR intervals do not cross zero, which confirms that the ranking gain and false-positive reduction are stable rather than accidental. At the same time, the AC deltas for F1 and balanced accuracy remain negative, which is consistent with the default $q_{95}$ operating point being more conservative than PatchCore-AC. We therefore interpret DRA-Inspect as a reliability enhancement that robustly lowers false alarms while exposing an operating-point trade-off, rather than as a method that uniformly improves all fixed-threshold metrics.
+
+\noindent Protocol-wise analysis shows that the average fixed-threshold behavior depends on both scene semantics and degradation type. The \textit{vegetation\_forest} protocol is the most stable case and exhibits the clearest ranking improvement. The \textit{water\_sealake} protocol remains competitive under noise, illumination shift, and compression, but becomes more sensitive under spatial-resolution degradation. The \textit{urban\_residential} protocol is the most challenging case, especially under blur and low-resolution degradation, which suggests that structurally similar urban scenes are more vulnerable when degradations suppress fine-grained spatial layout cues. For this reason, the averaged EuroSAT-Hard results should be read together with protocol-wise behavior rather than as evidence of uniform gains across all remote sensing scene pairs.
+
+\begin{table}[!htbp]
+\caption{Protocol-wise EuroSAT-Hard results averaged over five degradations. This table explains the protocol dependence behind the overall average in Table~\ref{tab:eurosat-hard-main}.}
+\label{tab:eurosat-hard-protocolwise}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lccccccc}
+\hline
+Protocol & Method & AUROC & Gap & FPR & TPR & F1 & BAcc \\
+\hline
+\textit{vegetation\_forest} & PatchCore-CF & 0.9690 & 0.9340 & 0.0720 & 0.8437 & 0.8807 & 0.8858 \\
+\textit{vegetation\_forest} & PatchCore-AC & 0.9690 & 1.7072 & 0.0517 & 0.8133 & 0.8718 & 0.8808 \\
+\textit{vegetation\_forest} & DRA-Inspect-CF & \textbf{0.9763} & 1.1496 & \textbf{0.0180} & 0.6953 & 0.8036 & 0.8387 \\
+\textit{vegetation\_forest} & DRA-Inspect-AC & \textbf{0.9763} & 1.6816 & 0.0367 & 0.7743 & 0.8504 & 0.8688 \\
+\hline
+\textit{urban\_residential} & PatchCore-CF & 0.9449 & 0.4829 & 0.0587 & 0.6873 & 0.7841 & 0.8143 \\
+\textit{urban\_residential} & PatchCore-AC & 0.9449 & 1.2780 & 0.0540 & 0.6573 & 0.7644 & 0.8017 \\
+\textit{urban\_residential} & DRA-Inspect-CF & 0.9439 & 0.5142 & \textbf{0.0183} & 0.3653 & 0.4794 & 0.6735 \\
+\textit{urban\_residential} & DRA-Inspect-AC & 0.9439 & 1.0579 & 0.0387 & 0.4870 & 0.5842 & 0.7242 \\
+\hline
+\textit{water\_sealake} & PatchCore-CF & 0.9606 & 1.6125 & 0.0413 & 0.6133 & 0.7363 & 0.7860 \\
+\textit{water\_sealake} & PatchCore-AC & 0.9606 & 1.0352 & 0.0550 & 0.7077 & 0.8003 & 0.8263 \\
+\textit{water\_sealake} & DRA-Inspect-CF & \textbf{0.9662} & 1.9764 & \textbf{0.0300} & 0.4560 & 0.5766 & 0.7130 \\
+\textit{water\_sealake} & DRA-Inspect-AC & \textbf{0.9662} & 1.0808 & 0.0527 & 0.7023 & 0.7817 & 0.8248 \\
+\hline
+\end{tabular}}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-protocolwise} makes clear that the average EuroSAT-Hard trade-off is not uniform across scene semantics. The \textit{vegetation\_forest} protocol is the cleanest positive case: DRA-Inspect improves AUROC while DRA-Inspect-CF sharply lowers FPR and DRA-Inspect-AC restores much of the recall and F1 under mixed memory. The \textit{water\_sealake} protocol follows the same two-mode pattern, but its benefit is less stable under spatial-resolution degradation, which lowers the protocol-wise average Fixed TPR and Fixed F1 of the mixed settings. By contrast, the overall average is mainly limited by \textit{urban\_residential}, where DRA-Inspect remains competitive in AUROC and low-FPR control but suffers pronounced recall loss under blur and low-resolution degradation. Figure~\ref{fig:protocol-tradeoff-rs} visualizes this protocol dependence as a fixed-FPR versus fixed-F1 trade-off. This protocol-level analysis is therefore necessary for interpreting the averaged results as a deployment trade-off rather than as uniform superiority across all remote sensing scene pairs.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\textwidth]{figures/figure4_protocol_tradeoff.png}
+\caption{Protocol-wise fixed-FPR versus fixed-F1 trade-off on EuroSAT-Hard. The three retained hard-scene protocols show that CF and AC should be read as protocol-dependent operating choices rather than as globally dominant settings.}
+\label{fig:protocol-tradeoff-rs}
+\end{figure}
+
+\subsection{Calibration Baseline Analysis}
+
+\begin{table}[!htbp]
+\caption{Calibration baseline comparison on EuroSAT-Hard. All calibration statistics are estimated from the held-out normal calibration split. The matched-FPR row for q50/q95 uses the same global pooled false-alarm budget as PatchCore-AC.}
+\label{tab:eurosat-hard-calibration-baselines}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Calibration & Threshold & FPR & TPR & F1 & BAcc \\
+\hline
+Clean-Q95 & 4.1348 & \textbf{0.0221} & 0.5056 & 0.6198 & 0.7417 \\
+z-score & 1.0000 & 0.1381 & \textbf{0.8630} & \textbf{0.8439} & \textbf{0.8624} \\
+median/IQR & 1.0000 & 0.0847 & 0.7897 & 0.8100 & 0.8525 \\
+q50/q95 & 1.0000 & 0.0427 & 0.6546 & 0.7388 & 0.8059 \\
+q50/q95 (matched FPR) & 0.9392 & 0.0536 & 0.7106 & 0.8056 & 0.8285 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-calibration-baselines} compares the proposed q50/q95 quantile calibration against two lightweight normal-score alternatives: z-score normalization and median/IQR normalization. All calibration statistics are estimated only from the held-out normal calibration split and do not use test-time corruption labels. The comparison shows that these calibration families induce substantially different fixed-threshold operating points even though all are monotonic transforms of the same underlying anomaly scores.
+
+\noindent z-score normalization produces the most aggressive high-recall regime, but it does so at a much higher false-positive rate of 0.1381. Median/IQR scaling is less aggressive but still operates at a noticeably higher false-alarm level than q50/q95. By contrast, the default q50/q95 point remains considerably more conservative, with FPR 0.0427, and is therefore better aligned with false-alarm-controlled deployment. Under the same global pooled false-alarm budget as PatchCore-AC, q50/q95 reaches F1 0.8056 and balanced accuracy 0.8285, which confirms that its primary value is not a universally stronger matched-FPR operating curve, but rather a controllable operating-point mechanism whose default threshold is substantially less aggressive than z-score or median/IQR scaling.
+
+\subsection{External Detector Baseline on EuroSAT-Hard}
+
+\begin{table}[!htbp]
+\caption{External detector baseline comparison on EuroSAT-Hard. PaDiM is reported as a strong detector-level baseline, while DRA-Inspect is kept as a PatchCore-style memory reliability enhancement. Matched-FPR rows use the same global pooled false-alarm budget as PatchCore-AC.}
+\label{tab:eurosat-hard-external-baseline}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Method / Setting & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+PaDiM-CF & 0.9612 & 0.0687 & 0.7996 & 0.8535 & 0.8654 \\
+PaDiM-AC ($q_{95}$) & 0.9612 & 0.0507 & 0.7521 & 0.8311 & 0.8507 \\
+PaDiM-AC (matched FPR) & 0.9612 & 0.0536 & \textbf{0.7671} & \textbf{0.8427} & \textbf{0.8568} \\
+PatchCore-AC ($q_{95}$) & 0.9582 & 0.0536 & 0.7261 & 0.8122 & 0.8363 \\
+DRA-Inspect-AC (matched FPR) & \textbf{0.9622} & 0.0536 & 0.7106 & 0.8056 & 0.8285 \\
+DRA-Inspect-CF & \textbf{0.9622} & \textbf{0.0221} & 0.5056 & 0.6198 & 0.7417 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-external-baseline} shows that EuroSAT-Hard is not artificially favorable to PatchCore. PaDiM is a strong external detector baseline with competitive average AUROC and stronger fixed-threshold F1 than the PatchCore-style calibrated variants under both the default and the matched-FPR diagnostic points. Under the same global pooled false-alarm budget as PatchCore-AC, PaDiM-AC reaches Fixed F1 0.8427 and balanced accuracy 0.8568, which remain above the matched-FPR DRA-Inspect-AC point at 0.8056 and 0.8285. We therefore do not interpret DRA-Inspect as a universal detector replacement. Instead, the PaDiM comparison clarifies the intended claim of this paper: DRA-Inspect is a training-free reliability enhancement with no additional learnable parameters for PatchCore-style memory deployment, DRA-Inspect-CF provides the most conservative low-FPR operating mode among the compared settings, and q50/q95 calibration should be interpreted as an operating-point mechanism rather than as a detector-level ranking booster. The PaDiM results also reinforce that calibration behavior is detector- and protocol-dependent rather than uniformly monotonic across detector families.
+
+\subsection{Equal-Size Memory Control on EuroSAT-Hard}
+
+\begin{table}[!htbp]
+\caption{Equal-size memory control on EuroSAT-Hard. Mixed-equal resamples the mixed bank to match the retained vector count of the clean-only baseline.}
+\label{tab:eurosat-hard-equal-size}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccc}
+\hline
+Setting & Bank vectors & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+Clean-only & 37632 & 0.9582 & 0.0536 & 0.7261 & 0.8122 & 0.8363 \\
+Mixed-equal & 37632 & 0.9594 & \textbf{0.0408} & 0.6430 & 0.7345 & 0.8011 \\
+Mixed-full & 225792 & \textbf{0.9622} & 0.0427 & 0.6546 & 0.7388 & 0.8059 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-equal-size} addresses the concern that mixed memory helps only because it retains more vectors. When the retained bank size is matched to the clean-only baseline, mixed memory still improves AUROC from 0.9582 to 0.9594 and lowers FPR from 0.0536 to 0.0408. This shows that degradation diversity itself contributes to ranking robustness and false-alarm suppression. However, the matched-size setting also shifts the default operating point toward a more conservative region, reducing TPR, F1, and balanced accuracy relative to clean-only memory. The full mixed bank further improves AUROC and partially recovers a more balanced fixed-threshold trade-off. We therefore interpret the EuroSAT equal-size control as evidence that the gain is not explained solely by bank size, while still acknowledging that retained memory capacity remains practically important.
+
+\subsection{Unseen-Severity and Unseen-Family Transfer on EuroSAT-Hard}
+
+\begin{table}[!htbp]
+\caption{Unseen-severity transfer on EuroSAT-Hard. Memory construction and calibration remain at the default degradation strength, while evaluation uses milder and more severe unseen test strengths.}
+\label{tab:eurosat-hard-unseen-severity}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Setting / Method & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+mild / PatchCore-AC & 0.9625 & 0.0411 & 0.7302 & 0.8245 & 0.8446 \\
+mild / DRA-Inspect-AC & 0.9624 & 0.0537 & \textbf{0.7681} & \textbf{0.8433} & \textbf{0.8572} \\
+mild / DRA-Inspect-AC (matched FPR) & 0.9624 & 0.0411 & 0.6933 & 0.7995 & 0.8261 \\
+severe / PatchCore-AC & 0.9474 & 0.0913 & 0.7131 & 0.7904 & 0.8109 \\
+severe / DRA-Inspect-AC & \textbf{0.9597} & \textbf{0.0319} & 0.5469 & 0.6928 & 0.7575 \\
+severe / DRA-Inspect-AC (matched FPR) & \textbf{0.9597} & 0.0913 & \textbf{0.7680} & \textbf{0.8261} & \textbf{0.8383} \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-unseen-severity} evaluates a stricter transfer setting in which mixed-memory construction and calibration remain at the default degradation strength, but testing shifts to unseen milder and more severe corruption levels. Under mild unseen severity, DRA-Inspect-AC maintains AUROC comparable to PatchCore-AC and achieves a slightly stronger default TPR/F1/BAcc trade-off, but it does so at a somewhat higher FPR. When the false-alarm budget is matched back to PatchCore-AC, the mild-setting advantage disappears, which indicates that this case is mainly an operating-point shift rather than a stronger matched-FPR curve.
+
+\noindent The severe setting reveals a different mechanism. Here DRA-Inspect-AC improves AUROC from 0.9474 to 0.9597 and sharply lowers default FPR from 0.0913 to 0.0319, but the default $q_{95}$ point becomes overly conservative and therefore loses TPR and F1. Once the same false-alarm budget is restored, however, DRA-Inspect-AC reaches Fixed TPR 0.7680, Fixed F1 0.8261, and balanced accuracy 0.8383, all above PatchCore-AC under the same FPR of 0.0913. We therefore interpret unseen-severity transfer as partial but meaningful: degradation-enriched memory continues to improve ranking robustness and false-alarm control beyond the matched-severity setting, while stronger unseen shifts move the default operating point toward a conservative regime that benefits from threshold adjustment.
+
+\begin{table}[!htbp]
+\caption{Unseen-family transfer on EuroSAT-Hard. Memory construction and calibration remain restricted to the original five degradation families, while evaluation uses two unseen remote-sensing-style families: haze and cloud-like veil.}
+\label{tab:eurosat-hard-unseen-family}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Test degradation / Method & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+haze / PatchCore-AC & 0.9661 & \textbf{0.0189} & 0.5883 & 0.7256 & 0.7847 \\
+haze / DRA-Inspect-AC & \textbf{0.9665} & 0.0389 & \textbf{0.7417} & \textbf{0.8270} & \textbf{0.8514} \\
+haze / DRA-Inspect-AC (matched FPR) & \textbf{0.9665} & 0.0189 & 0.5906 & 0.7339 & 0.7858 \\
+cloud-like veil / PatchCore-AC & \textbf{0.9653} & \textbf{0.0217} & 0.6361 & 0.7625 & 0.8072 \\
+cloud-like veil / DRA-Inspect-AC & 0.9652 & 0.0506 & \textbf{0.7939} & \textbf{0.8573} & \textbf{0.8717} \\
+cloud-like veil / DRA-Inspect-AC (matched FPR) & 0.9652 & 0.0217 & 0.5972 & 0.7378 & 0.7878 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-unseen-family} extends the transfer analysis beyond the predefined degradation set by testing two unseen remote-sensing-style families, haze and cloud-like veil, while keeping memory construction and calibration restricted to the original five degradation families. Under the default $q_{95}$ calibrated threshold, DRA-Inspect-AC yields substantially higher TPR/F1/BAcc than PatchCore-AC on both unseen families, but this gain is accompanied by a higher false-positive rate. This means that the unseen-family benefit at the default operating point is real, but it should be interpreted as a different operating-point placement rather than as a free improvement at the same false-alarm budget.
+
+\noindent The matched-FPR comparison clarifies this boundary. On haze, DRA-Inspect-AC becomes nearly unchanged once the false-alarm budget is matched back to PatchCore-AC. On cloud-like veil, the matched-FPR point is slightly weaker than PatchCore-AC. We therefore interpret unseen-family transfer as partial rather than uniform: DRA-Inspect continues to reposition the default fixed-threshold operating point on unseen degradation families, but it does not expose a uniformly stronger matched-FPR curve beyond the predefined degradation set.
+
+\subsection{Additional Remote Sensing Validation on NWPU-Hard}
+We further evaluate DRA-Inspect on an extended NWPU-Hard validation set constructed from three hard-scene protocols and the same five degradation families used on EuroSAT-Hard (\textit{noise}, \textit{blur}, \textit{light}, \textit{lowres}, and \textit{jpeg}). Compared with EuroSAT-Hard, NWPU-Hard contains more diverse aerial scene distributions and stronger within-class variation, which makes fixed-threshold deployment more challenging even under aligned degradation-family coverage.
+
+\begin{table}[!htbp]
+\caption{Average results on NWPU-Hard extended validation over three hard-scene protocols and five degradations. The final row reports the global pooled matched-FPR diagnostic point for DRA-Inspect-AC under the same false-alarm budget as PatchCore-AC.}
+\label{tab:nwpu-hard-main}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Method & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+PatchCore-CF & 0.7503 & 0.0262 & 0.2249 & 0.3480 & 0.5993 \\
+DRA-Inspect-CF & \textbf{0.7585} & \textbf{0.0229} & 0.2020 & 0.3122 & 0.5896 \\
+PatchCore-AC & 0.7503 & 0.0438 & 0.2890 & 0.4201 & 0.6226 \\
+DRA-Inspect-AC & \textbf{0.7585} & \textbf{0.0376} & 0.2748 & 0.4044 & 0.6186 \\
+DRA-Inspect-AC (matched FPR) & \textbf{0.7585} & 0.0438 & \textbf{0.3074} & \textbf{0.4550} & \textbf{0.6318} \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent The extended NWPU-Hard results show that the ranking-level effect partially transfers to this second remote sensing benchmark under the same degradation-family coverage as EuroSAT-Hard. DRA-Inspect improves the average AUROC from 0.7503 to 0.7585 under both CF and AC protocols. However, the fixed-threshold improvements remain weaker than those on EuroSAT-Hard. Under the default $q_{95}$ calibrated threshold, DRA-Inspect-AC lowers the average false-positive rate from 0.0438 to 0.0376, but TPR, F1, and balanced accuracy remain slightly lower than PatchCore-AC. This indicates that degradation-enriched memory still improves average score ranking and suppresses false alarms on the more diverse NWPU scene distribution, while its default operating point remains more conservative than on EuroSAT-Hard.
+
+\noindent The matched-FPR analysis clarifies this restrained transfer further. When DRA-Inspect-AC is compared under the same global pooled false-alarm budget as PatchCore-AC, Fixed TPR increases from 0.2890 to 0.3074, Fixed F1 increases from 0.4201 to 0.4550, and balanced accuracy increases from 0.6226 to 0.6318. We therefore interpret NWPU-Hard as a restrained but useful secondary remote-sensing validation: the ranking-robustness effect still transfers, and the threshold-level benefit reappears under matched-FPR comparison, but the default operating point remains more protocol-dependent than on EuroSAT-Hard.
+
+\subsection{Cross-Domain Validation on MVTec AD}
+We retain MVTec AD~\cite{mvtecad} only as cross-domain supporting evidence. The goal is not to make industrial inspection the primary evaluation domain again, but to verify that the same memory-calibration principle transfers beyond remote sensing. Table~\ref{tab:main} reports the final benchmark comparison on all 15 categories, while Table~\ref{tab:ablation} provides a compact memory-design diagnostic.
+
+\begin{table}[!htbp]
+\caption{Memory-design ablation on \textit{capsule}. Mixed degradation-enriched memory performs best, while the equal-size control shows that the gain is not explained only by a larger bank.}
+\label{tab:ablation}
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lcccc}
+\hline
+Memory design & JPEG & Light & Noise & Avg. \\
+\hline
+Clean-only & 0.8436 & 0.8584 & 0.8484 & 0.8501 \\
+Target-only & 0.8496 & 0.8759 & 0.8672 & 0.8642 \\
+Clean+Target & 0.9091 & 0.9190 & 0.9202 & 0.9161 \\
+Mixed degradation-enriched & \textbf{0.9318} & \textbf{0.9250} & \textbf{0.9282} & \textbf{0.9283} \\
+Mixed degradation-enriched (equal-size) & 0.8751 & 0.8823 & 0.8763 & 0.8779 \\
+Per-bank minimum & 0.8480 & 0.8755 & 0.8755 & 0.8663 \\
+\hline
+\end{tabular}}
+\end{table}
+\vspace{-4pt}
+
+\noindent The capsule ablation indicates that the main gain comes from broadening the support of normality rather than from selecting a single matching degradation bank. The equal-size control still improves over clean-only memory, which shows that robustness is not explained solely by bank size, even though larger retained capacity remains helpful.
+
+\begin{table}[!htbp]
+\caption{Final cross-domain results on MVTec AD, averaged over 15 categories and five degradations. The last row is a degradation-specific reference.}
+\label{tab:main}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Setting & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+PatchCore + clean ref. & 0.9322 & 0.2183 & 0.8309 & 0.8498 & 0.8063 \\
+PatchCore + agnostic cal. & 0.9322 & 0.1287 & 0.7807 & 0.8277 & 0.8260 \\
+DRA mixed + clean ref. & 0.9590 & 0.1745 & 0.8827 & \textbf{0.9052} & 0.8541 \\
+DRA mixed + agnostic cal. & \textbf{0.9590} & \textbf{0.1425} & 0.8735 & 0.9030 & \textbf{0.8655} \\
+DRA mixed + specific ref. & \textbf{0.9590} & 0.1637 & \textbf{0.8881} & 0.9085 & 0.8622 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:main} shows that the remote-sensing interpretation also transfers across domains. Degradation-enriched memory raises average AUROC from 0.9322 to 0.9590, while the corruption-agnostic calibrated mode lowers average fixed FPR from 0.2183 to 0.1425 relative to PatchCore with clean-reference thresholding. The 2$\times$2 comparison again reveals the same division of labor as in remote sensing: mixed memory is the main source of ranking and recall improvement, whereas calibration repositions the operating point and further suppresses false alarms without requiring test-time corruption labels.
+
+\noindent Additional diagnostics remain consistent with this picture. On average over all 15 categories, clean-condition AUROC is preserved and even slightly improved from 0.9368 to 0.9620, indicating that the broader normality support does not collapse clean discrimination. Representative calibration-sensitive categories such as \textit{capsule} and \textit{metal\_nut} also show lower fixed-threshold false alarms without changed ranking, so we treat MVTec as cross-domain confirmation of the memory-calibration mechanism rather than as a parallel primary study.
+
+\subsection{Cost--Reliability Trade-off Analysis}
+
+\begin{table}[!htbp]
+\caption{EuroSAT-Hard coreset-ratio cost--reliability sensitivity for conservative clean-reference (CF) and corruption-agnostic calibrated (AC) deployment modes. Lower coreset ratios reduce retrieval cost and bank storage for both methods.}
+\label{tab:eurosat-hard-coreset-tradeoff}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccccc}
+\hline
+Core & Method & AUROC & FPR & F1 & BAcc & Avg. ms/img & Bank MB \\
+\hline
+0.10 & PatchCore-CF & 0.9582 & 0.0573 & \textbf{0.8004} & \textbf{0.8287} & 90.96 & 220.50 \\
+0.10 & PatchCore-AC & 0.9582 & 0.0536 & \textbf{0.8122} & \textbf{0.8363} & 90.96 & 220.50 \\
+0.10 & DRA-Inspect-CF & \textbf{0.9622} & \textbf{0.0221} & 0.6198 & 0.7417 & 467.36 & 1323.00 \\
+0.10 & DRA-Inspect-AC & \textbf{0.9622} & \textbf{0.0427} & 0.7388 & 0.8059 & 467.36 & 1323.00 \\
+0.05 & PatchCore-CF & 0.9568 & 0.0562 & \textbf{0.7934} & \textbf{0.8239} & 45.82 & 110.25 \\
+0.05 & PatchCore-AC & 0.9568 & 0.0519 & \textbf{0.8017} & \textbf{0.8291} & 45.82 & 110.25 \\
+0.05 & DRA-Inspect-CF & \textbf{0.9610} & \textbf{0.0216} & 0.6138 & 0.7375 & 237.86 & 661.50 \\
+0.05 & DRA-Inspect-AC & \textbf{0.9610} & \textbf{0.0432} & 0.7415 & 0.8063 & 237.86 & 661.50 \\
+0.02 & PatchCore-CF & 0.9552 & 0.0531 & \textbf{0.7738} & \textbf{0.8117} & 22.41 & 44.10 \\
+0.02 & PatchCore-AC & 0.9552 & 0.0526 & \textbf{0.7972} & \textbf{0.8258} & 22.41 & 44.10 \\
+0.02 & DRA-Inspect-CF & \textbf{0.9593} & \textbf{0.0211} & 0.6106 & 0.7340 & 99.39 & 264.60 \\
+0.02 & DRA-Inspect-AC & \textbf{0.9593} & \textbf{0.0426} & 0.7285 & 0.7969 & 99.39 & 264.60 \\
+0.01 & PatchCore-CF & 0.9533 & 0.0553 & \textbf{0.7740} & \textbf{0.8106} & 10.79 & 22.05 \\
+0.01 & PatchCore-AC & 0.9533 & 0.0532 & \textbf{0.7940} & \textbf{0.8228} & 10.79 & 22.05 \\
+0.01 & DRA-Inspect-CF & \textbf{0.9585} & \textbf{0.0206} & 0.6193 & 0.7373 & 53.66 & 132.30 \\
+0.01 & DRA-Inspect-AC & \textbf{0.9585} & \textbf{0.0418} & 0.7341 & 0.7992 & 53.66 & 132.30 \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent Table~\ref{tab:eurosat-hard-coreset-tradeoff} shows that coreset ratio provides a controllable deployment trade-off on EuroSAT-Hard. Reducing the retained ratio from 0.10 to 0.01 cuts DRA-Inspect inference latency from 467.36 to 53.66 ms per image and bank storage from 1323.00 to 132.30 MB, while the average AUROC decreases only from 0.9622 to 0.9585 and the default false-positive rate remains essentially unchanged at 0.0427 versus 0.0418. Across all four coreset settings, DRA-Inspect-AC consistently preserves higher AUROC and lower default FPR than PatchCore-AC, but its default F1 and balanced accuracy remain more conservative, which is consistent with the main threshold-sensitivity and matched-FPR analyses. The conservative CF mode is similarly stable under compression: its average fixed FPR remains between 0.0206 and 0.0221 from ratio 0.10 to 0.01, which supports the same low-false-alarm interpretation even under much smaller banks.
+
+\noindent The intermediate ratio 0.05 remains the most practical middle point. Relative to the default 0.10 setting, it retains most of the ranking and false-alarm benefit of DRA-Inspect-AC (AUROC 0.9610 vs.\ 0.9622; FPR 0.0432 vs.\ 0.0427) while reducing latency and memory to roughly one half (237.86 ms per image and 661.50 MB). This makes ratio 0.05 a reasonable balanced default when both reliability and resource cost matter. At the same time, the more aggressive 0.01 setting shows that the main reliability effect does not disappear under strong compression: even after an approximately one-order-of-magnitude reduction in storage and retrieval cost, DRA-Inspect-AC still remains above PatchCore-AC in AUROC and below it in default FPR. This makes ratio 0.01 a plausible lightweight deployment option when latency and memory dominate the operating constraints. We therefore interpret coreset ratio not as a hidden tuning artifact, but as an explicit deployment knob: moderate compression offers a strong practical sweet spot, while stronger compression can still preserve most of the ranking and low-false-alarm benefit.
+
+\begin{table}[!htbp]
+\caption{Average remote-sensing runtime profile at the main deployment setting. EuroSAT-Hard uses the default coreset ratio 0.10, and NWPU-Hard reports the aligned secondary-validation setting. Latency includes feature extraction and nearest-neighbor retrieval on representative test subsets; DRA-Inspect adds no extra learnable parameters.}
+\label{tab:overhead}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+Dataset & Method & Avg. ms/img & Bank vectors & Bank MB & Extra params \\
+\hline
+EuroSAT-Hard & PatchCore & 90.96 & 37632 & 220.50 & 0 \\
+EuroSAT-Hard & DRA-Inspect & 467.36 & 225792 & 1323.00 & 0 \\
+NWPU-Hard & PatchCore & 26.94 & 8781 & 51.45 & 0 \\
+NWPU-Hard & DRA-Inspect & 114.26 & 52685 & 308.70 & 0 \\
+\hline
+\end{tabular}
+\end{table}
+\vspace{-4pt}
+
+\subsection{Qualitative Visualization}
+Figure~\ref{fig:score-shift-rs} turns the EuroSAT-Hard trade-off into a tile-level failure analysis. The example uses the \textit{vegetation\_forest} protocol under blur, where the degraded tile remains semantically normal at scene level, yet PatchCore-AC still places it above the decision threshold and would trigger a false alarm. DRA-Inspect-CF pulls the same tile back toward the normal region by broadening memory support, and DRA-Inspect-AC then repositions the operating point to recover a more balanced threshold decision without changing the ranking metric.
+
+\begin{figure}[!tbp]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/figure3_eurosat_score_shift.png}
+\caption{EuroSAT-Hard tile-level score-shift case study on the \textit{vegetation\_forest} protocol under blur. The left panel shows a representative degraded normal tile that remains normal at scene level, while the three score histograms compare PatchCore-AC, DRA-Inspect-CF, and DRA-Inspect-AC. The example illustrates a representative false alarm under PatchCore-AC and how mixed memory plus corruption-agnostic calibration move the decision point back toward a more balanced operating regime without changing the ranking metric.}
+\label{fig:score-shift-rs}
+\end{figure}
+\vspace{-6pt}
+
+\FloatBarrier
+
+\subsection{Discussion}
+The EuroSAT-Hard results support a deployment-oriented picture that is shared by remote sensing monitoring and industrial inspection. This paper is therefore better read as a scene-level deployment reliability study than as a new detector-architecture paper. Although these domains differ in scene diversity and object scale, both suffer from the same failure mode: non-semantic imaging degradation can shift normal anomaly scores and break fixed thresholds. Clean-only memory is therefore too narrow under degraded imaging, whereas degradation-enriched memory broadens normal support and modestly improves ranking robustness.
+
+Calibration should not be interpreted as a ranking booster or as a universally lower-FPR module. The quantile transform is monotonic for fixed calibration statistics, so its role is not to improve AUROC by itself, but to reposition the fixed-threshold operating point under mixed memory. In EuroSAT-Hard, this yields two deployment modes inside the PatchCore-style memory setting: DRA-Inspect-CF for conservative false-alarm control, and DRA-Inspect-AC for a more balanced operating point that partially recovers recall, F1, and balanced accuracy. From a deployment perspective, CF is the more suitable choice when false alarms are expensive and flagged tiles are sent to costly human review, whereas AC is the more suitable choice when recall must be balanced against false alarms under a fixed threshold. If an application has an explicit false-alarm budget, the operating point can be chosen on held-out validation data through quantile levels such as $q_{90}$, $q_{92.5}$, $q_{95}$, or $q_{97.5}$ rather than being fixed a priori at a single default value. The calibration-baseline study further shows that q50/q95 is not merely an arbitrary normalization choice: compared with z-score and median/IQR scaling, it yields a more conservative default point that better matches false-alarm-controlled deployment. The multi-seed and paired bootstrap analyses suggest that the average AUROC gain is modest but stable, while the false-positive reduction is more robust than the corresponding changes in default TPR, F1, and balanced accuracy. The EuroSAT equal-size control further indicates that the effect is not explained solely by a larger bank, although the matched-size operating point remains more conservative than clean-only memory. The coreset-ratio sensitivity sharpens the same point from the opposite direction: smaller retained banks reduce cost substantially, yet DRA largely maintains its AUROC and default-FPR advantage across 0.10, 0.05, 0.02, and 0.01. The 0.05 setting remains a reasonable practical middle ground, while the 0.01 setting indicates that even near one-order-of-magnitude compression keeps most of the ranking and low-false-alarm behavior. The transfer studies sharpen this interpretation further: under mild unseen severity and under unseen degradation families, DRA mainly changes the default operating point, whereas under severe unseen shifts it preserves a stronger ranking and matched-FPR trade-off but becomes too conservative at the default threshold. The PaDiM comparison adds an important complementary message: a strong external detector baseline can still produce higher default fixed-threshold F1, so DRA-Inspect should be read as a deployment reliability enhancement for memory-based inference rather than as a universal detector-level optimum. The trade-off therefore depends on detector family, protocol, degradation type, and retained bank size, with urban residential scenes being more sensitive to blur and spatial-resolution loss than vegetation or water protocols. Real sensor-specific artifacts, seasonal domain shifts, cloud contamination, and atmospheric mixtures remain beyond the current controlled degradation protocol.
+
+NWPU-Hard also suggests a restrained cross-dataset interpretation. On the harder aerial-scene benchmark with aligned degradation-family coverage, the ranking-level effect still transfers, but the fixed-threshold benefit becomes more protocol-dependent and is most clearly visible through matched-FPR comparison rather than through the default $q_{95}$ point alone. Tables~\ref{tab:eurosat-hard-coreset-tradeoff} and \ref{tab:overhead} correspondingly show that these gains come with tunable but non-trivial storage and retrieval cost, so DRA-Inspect is best viewed as a practical plug-in enhancement rather than a zero-cost solution.
+
+\subsection{Limitations}
+Several limitations remain. First, although we now include a small unseen-family study with haze and cloud-like veil, the degradation families considered during memory construction are still predefined and the new family evaluation remains controlled and synthetic. These perturbations are useful for isolating threshold-reliability failure modes, but they do not fully represent real remote sensing imaging chains involving cloud contamination, seasonal land-cover change, atmospheric correction errors, sensor-specific artifacts, or mixed real-world degradation distributions. Second, unseen-severity and unseen-family transfer are partial rather than uniform: ranking robustness and false-alarm control can still transfer beyond the matched training setting, but stronger unseen shifts may move the default operating point into an overly conservative regime, while unseen families may mainly change the default threshold location rather than produce a stronger matched-FPR curve. Third, mixed normality memory increases storage and retrieval cost, which may become challenging for large-scale remote sensing archives with many scene categories or high-resolution tiles. Compact coreset design helps, but approximate nearest-neighbor retrieval and other acceleration strategies remain important future work for larger deployments. Fourth, the current formulation focuses on image-tile or scene-level anomaly detection; pixel-level or object-level anomaly localization in high-resolution remote sensing imagery remains an important extension. Fifth, the present category-wise calibration setup assumes a predefined normal class for the monitored scene stream, whereas broader open-world deployments with evolving class composition require additional study. Sixth, calibration statistics may drift over time when the operational degradation mixture changes, so periodic recalibration or online normal-score monitoring is a promising direction.
+
+\section{Conclusion}
+We presented DRA-Inspect, a deployment-oriented robustness enhancement for scene-level remote sensing image-tile anomaly detection under imaging degradation. By combining degradation-enriched normality memory with reliability-calibrated anomaly scoring, the method targets a practical deployment problem in remote sensing monitoring: normal-score drift under common degradations and the resulting instability of fixed thresholds. On EuroSAT-Hard, DRA-Inspect slightly improves average ranking performance and provides two operating modes within the PatchCore-style memory pipeline: a conservative clean-reference mode with clearly lower false alarms, and a corruption-agnostic calibrated mode that recovers part of the recall and F1 lost by the conservative setting. Multi-seed and paired-bootstrap analyses further indicate that the ranking gain is modest but stable, while the false-positive reduction is more consistently separated from the PatchCore baseline. The equal-size and coreset-ratio studies further show that the observed behavior is not explained solely by a larger memory bank and that much of the effect remains under substantial memory compression. The transfer analyses suggest that generalization beyond the matched training setting is partial but still useful: under severe unseen severity, DRA-Inspect retains a stronger ranking and matched-FPR trade-off, whereas under unseen degradation families the main effect is a shift of the default operating point rather than a uniformly stronger matched-FPR curve. Taken together with the PaDiM comparison and the NWPU-Hard secondary validation, these findings support a restrained claim: DRA-Inspect is not a universal detector replacement, but a training-free fixed-threshold reliability enhancement for scene-level remote sensing deployment under degraded imaging.
+
+\appendixtitles{yes}
+\appendixstart
+\appendix
+\renewcommand{\theHsection}{appendix.\thesection}
+\renewcommand{\theHtable}{appendix.\thetable}
+
+\section{NWPU-Hard Protocol-Wise Breakdown}
+Table~\ref{tab:nwpu-protocol-wise-appendix} reports the protocol-wise average results for the extended NWPU-Hard validation. These numbers clarify why the main NWPU summary remains restrained: the matched-FPR gain is not uniform across protocols, but it is most visible in the harder urban and vegetation settings, whereas the airport protocol benefits mainly at the ranking level and under the default low-FPR operating point.
+
+\begin{table}[!htbp]
+\caption{Protocol-wise average results on the extended NWPU-Hard benchmark. The matched-FPR row reports the DRA-Inspect corruption-agnostic setting after matching the pooled false-positive budget of PatchCore-AC; AUROC is omitted there because threshold matching only changes the operating point.}
+\label{tab:nwpu-protocol-wise-appendix}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lcccccc}
+\hline
+Protocol & Method & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+Airport & PatchCore-AC & 0.7966 & 0.0486 & 0.4397 & 0.5859 & 0.6956 \\
+Airport & DRA-Inspect-AC & \textbf{0.8078} & \textbf{0.0314} & 0.4000 & 0.5497 & 0.6843 \\
+Airport & DRA-Inspect-AC (matched FPR) & --- & 0.0443 & 0.4312 & 0.5761 & 0.6935 \\
+Urban Dense & PatchCore-AC & \textbf{0.7718} & 0.0371 & 0.2114 & 0.3346 & 0.5871 \\
+Urban Dense & DRA-Inspect-AC & 0.7699 & \textbf{0.0357} & 0.2014 & 0.3159 & 0.5829 \\
+Urban Dense & DRA-Inspect-AC (matched FPR) & --- & 0.0371 & \textbf{0.2329} & \textbf{0.3567} & \textbf{0.5979} \\
+Vegetation Forest & PatchCore-AC & 0.6824 & 0.0457 & 0.2157 & 0.3398 & 0.5850 \\
+Vegetation Forest & DRA-Inspect-AC & \textbf{0.6979} & 0.0457 & 0.2229 & 0.3475 & 0.5886 \\
+Vegetation Forest & DRA-Inspect-AC (matched FPR) & --- & 0.0500 & \textbf{0.2571} & \textbf{0.3884} & \textbf{0.6036} \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{NWPU-Hard Degradation-Wise Breakdown}
+Table~\ref{tab:nwpu-degradation-wise-appendix} summarizes the same benchmark by degradation family. The breakdown shows that the transferred effect is heterogeneous but interpretable: DRA-Inspect improves AUROC most clearly under blur and low-resolution corruption, matches PatchCore under light and noise, and mainly changes the operating point under JPEG compression.
+
+\begin{table}[!htbp]
+\caption{Degradation-wise average results on the extended NWPU-Hard benchmark at the default corruption-agnostic operating point.}
+\label{tab:nwpu-degradation-wise-appendix}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lcccccc}
+\hline
+Degradation & Method & AUROC & FPR & TPR & F1 & BAcc \\
+\hline
+Noise & PatchCore-AC & 0.7532 & 0.0524 & 0.3083 & 0.4352 & 0.6280 \\
+Noise & DRA-Inspect-AC & \textbf{0.7551} & 0.0524 & \textbf{0.3297} & \textbf{0.4644} & \textbf{0.6387} \\
+Blur & PatchCore-AC & 0.7466 & 0.0357 & \textbf{0.2705} & \textbf{0.4074} & \textbf{0.6174} \\
+Blur & DRA-Inspect-AC & \textbf{0.7633} & \textbf{0.0167} & 0.2088 & 0.3353 & 0.5961 \\
+Light & PatchCore-AC & 0.7653 & \textbf{0.0238} & 0.2040 & 0.3250 & 0.5901 \\
+Light & DRA-Inspect-AC & \textbf{0.7676} & 0.0262 & \textbf{0.2183} & \textbf{0.3451} & \textbf{0.5960} \\
+Low Resolution & PatchCore-AC & 0.7407 & 0.0381 & \textbf{0.2776} & \textbf{0.4142} & \textbf{0.6197} \\
+Low Resolution & DRA-Inspect-AC & \textbf{0.7603} & \textbf{0.0190} & 0.2017 & 0.3252 & 0.5913 \\
+JPEG & PatchCore-AC & 0.7456 & \textbf{0.0690} & 0.3844 & 0.5188 & 0.6577 \\
+JPEG & DRA-Inspect-AC & \textbf{0.7464} & 0.0738 & \textbf{0.4153} & \textbf{0.5518} & \textbf{0.6708} \\
+\hline
+\end{tabular}
+\end{table}
+
+\authorcontributions{Conceptualization, methodology, software, validation, formal analysis, writing---original draft preparation, writing---review and editing, and visualization were performed by the authors. All authors have read and agreed to the published version of the manuscript.}
+
+\funding{This work was supported by the National Natural Science Foundation of China under Grants 62501025, 62471049, and 62476013, and by the Fundamental Research Funds for the Central Universities under Grants 3282025011 and 3282024057.}
+
+\institutionalreview{Not applicable.}
+
+\informedconsent{Not applicable.}
+
+\dataavailability{Public benchmark datasets used in this study are available from their original sources. The code, configurations, and processed result files used to reproduce the reported experiments will be released upon acceptance.}
+
+\acknowledgments{The authors thank colleagues for helpful discussions and feedback that improved the clarity of this work.}
+
+\conflictsofinterest{The authors declare no conflicts of interest.}
+
+\begin{adjustwidth}{-\extralength}{0cm}
+\reftitle{References}
+\begin{thebibliography}{999}
+\bibitem{robustness}
+Hendrycks, D., Dietterich, T.: Benchmarking neural network robustness to common corruptions and perturbations. In: ICLR (2019)
+\bibitem{rsrobustsurvey}
+Mei, S., Lian, J., Wang, X., Su, Y., Ma, M., Chau, L.-P.: A comprehensive study on the robustness of image classification and object detection in remote sensing: Surveying and benchmarking. arXiv preprint arXiv:2306.12111 (2023)
+\bibitem{reobench}
+Li, X., Tao, Y., Zhang, S., Liu, S., Xiong, Z., Luo, C., Liu, L., Pechenizkiy, M., Zhu, X.X., Huang, T.: REOBench: Benchmarking robustness of Earth observation foundation models. In: NeurIPS Datasets and Benchmarks Track (2025)
+\bibitem{satanomreview}
+Lee, H., Kim, J.-W.: AI-based satellite anomaly detection using fused multi-view remote sensing data: Technologies and prospects. Korean Journal of Remote Sensing 41(5), 899--909 (2025)
+\bibitem{patchcore}
+Roth, K., Pemula, L., Zepeda, J., Scholkopf, B., Brox, T., Gehler, P.: Towards total recall in industrial anomaly detection. In: CVPR, pp. 14318--14328 (2022)
+\bibitem{padim}
+Defard, T., Setkov, A., Loesch, A., Audigier, R.: PaDiM: A patch distribution modeling framework for anomaly detection and localization. In: ICPR, pp. 475--489 (2021)
+\bibitem{bestpractices}
+Baitieva, A., Bouaouni, Y., Briot, A., Ameln, D., Khalfaoui, S., Akcay, S.: Beyond academic benchmarks: Critical analysis and best practices for visual industrial anomaly detection. In: CVPR Workshops, pp. 4054--4064 (2025)
+\bibitem{hyperspectralsurvey}
+Cheng, B., Gao, Y.: Research progress on anomaly target detection algorithms for hyperspectral imagery. Geocarto International 40(1), 2589446 (2025)
+\bibitem{hsicomparison}
+Wheeler, B.J., Karimi, H.A.: Enhancing hyperspectral anomaly detection algorithm comparisons: Leveraging dataset and algorithm characteristics. Remote Sensing 16(20), 3879 (2024)
+\bibitem{hsisscmae}
+Guo, Q., Cen, Y., Zhang, L., Zhang, Y., Huang, Y.: Hyperspectral anomaly detection based on spatial--spectral cross-guided mask autoencoder. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing 17, 9876--9889 (2024)
+\bibitem{rsdpnood}
+Gawlikowski, J., Saha, S., Kruspe, A., Zhu, X.X.: An advanced Dirichlet prior network for out-of-distribution detection in remote sensing. IEEE Transactions on Geoscience and Remote Sensing 60, 5616819, 1--19 (2022)
+\bibitem{rsopenset}
+Zhang, J., Liu, J., Pan, B., Chen, Z.: An open set domain adaptation algorithm via exploring transferability and discriminability for remote sensing image scene classification. IEEE Transactions on Geoscience and Remote Sensing 60, 1--12 (2022)
+\bibitem{rsnnood}
+Dimitric, D., Risojevic, V., Simic, M.: Nearest neighbor based out-of-distribution detection in remote sensing scene classification. In: 2023 22nd International Symposium INFOTEH-JAHORINA, pp. 1--6 (2023)
+\bibitem{rsoddeval}
+Li, S., Li, N., Jing, M., Ji, C., Cheng, L.: Evaluation of ten deep-learning-based out-of-distribution detection methods for remote sensing image scene classification. Remote Sensing 16(9), 1501 (2024)
+\bibitem{zsrssc}
+Tan, X., Xi, B., Li, J., Zheng, T., Li, Y., Xue, C., Chanussot, J.: Review of zero-shot remote sensing image scene classification. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing 17, 11274--11289 (2024)
+\bibitem{liosrsar}
+Yang, J., Gu, J., Xin, J., Cong, Z., Ding, D.: LiOSR-SAR: Lightweight open-set recognizer for SAR imageries. Remote Sensing 16(19), 3741 (2024)
+\bibitem{eurosat}
+Helber, P., Bischke, B., Dengel, A., Borth, D.: EuroSAT: A novel dataset and deep learning benchmark for land use and land cover classification. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing 12(7), 2217--2226 (2019)
+\bibitem{resisc45}
+Cheng, G., Han, J., Lu, X.: Remote sensing image scene classification: Benchmark and state of the art. Proceedings of the IEEE 105(10), 1865--1883 (2017)
+\bibitem{rsscenereview}
+Kumari, M., Kaul, A.: Deep learning techniques for remote sensing image scene classification: A comprehensive review, current challenges, and future directions. Concurrency and Computation: Practice and Experience 35(22), e7733 (2023)
+\bibitem{noisyrs}
+Song, Z., Xu, C., Chen, Y., Sui, H., Liu, J., Ye, Z.: An integrated negative and positive learning method for scene classification of remote sensing images with noisy labels. IEEE Geoscience and Remote Sensing Letters 22, 6007505 (2024)
+\bibitem{dualmodelscene}
+Guo, N., Jiang, M., Wang, D., Zhou, X., Song, Z., Li, Y., Gao, L., Luo, J.: Scene classification for remote sensing image of land use and land cover using dual-model architecture with multilevel feature fusion. International Journal of Digital Earth 17(1), 2353166 (2024)
+\bibitem{rsyolorobust}
+Adli, T., Bujakovic, D.M., Bondzulic, B.P., Laidouni, M.Z., Andric, M.S.: Robustness of YOLO models for object detection in remote sensing images. Journal of Electrical Engineering 76(5), 429--442 (2025)
+\bibitem{rsuda}
+Li, L., Zhang, H., Xie, G., Zhang, Z.: Robust remote sensing scene interpretation based on unsupervised domain adaptation. Electronics 13(18), 3709 (2024)
+\bibitem{realtimessa}
+Yan, X., Lyu, H., Chen, Z., Peng, R., Chen, J., Zou, J., Dong, W., et al.: Real-time remote sensing for sudden surface anomalies: A review of principles and challenges. Space: Science \& Technology 5, 0362 (2025)
+\bibitem{draem}
+Zavrtanik, V., Kristan, M., Skocaj, D.: DRAEM: A discriminatively trained reconstruction embedding for surface anomaly detection. In: ICCV, pp. 8330--8339 (2021)
+\bibitem{rd4ad}
+Deng, H., Li, X.: Anomaly detection via reverse distillation from one-class embedding. In: CVPR, pp. 9737--9746 (2022)
+\bibitem{reconpatch}
+Hyun, J., Kim, S., Jeon, G., Kim, S.H., Bae, K., Kang, B.J.: ReConPatch: Contrastive patch representation learning for industrial anomaly detection. In: WACV, pp. 2052--2061 (2024)
+\bibitem{simplenet}
+Liu, Z., Zhou, Y., Xu, Y., Wang, Z.: SimpleNet: A simple network for image anomaly detection and localization. In: CVPR, pp. 20402--20411 (2023)
+\bibitem{anomalydino}
+Damm, S., Laszkiewicz, M., Lederer, J., Fischer, A.: AnomalyDINO: Boosting patch-based few-shot anomaly detection with DINOv2. In: WACV, pp. 1319--1329 (2025)
+\bibitem{univad}
+Gu, Z., Zhu, B., Zhu, G., Chen, Y., Tang, M., Wang, J.: UniVAD: A training-free unified model for few-shot visual anomaly detection. In: CVPR, pp. 15194--15203 (2025)
+\bibitem{cflowad}
+Gudovskiy, D.A., Ishizaka, S., Kozuka, K.: CFLOW-AD: Real-time unsupervised anomaly detection with localization via conditional normalizing flows. In: WACV (2022)
+\bibitem{fastflow}
+Yu, J., Zheng, Y., Wang, X., Li, W., Wu, Y., Zhao, R., Wu, L.: FastFlow: Unsupervised anomaly detection and localization via 2D normalizing flows. arXiv preprint arXiv:2111.07677 (2021)
+\bibitem{rdpp}
+Tien, T.D., Nguyen, A.T., Tran, N.H., Huy, T.D., Duong, S.T.M., Nguyen, C.D.T., Truong, S.Q.H.: Revisiting reverse distillation for anomaly detection. In: CVPR, pp. 24511--24520 (2023)
+\bibitem{winclip}
+Jeong, J., Zou, Y., Kim, T., Zhang, D., Ravichandran, A., Dabeer, O.: WinCLIP: Zero-/few-shot anomaly classification and segmentation. In: CVPR, pp. 19606--19616 (2023)
+\bibitem{anomalyclipiclr}
+Zhou, Q., Pang, G., Tian, Y., He, S., Chen, J.: AnomalyCLIP: Object-agnostic prompt learning for zero-shot anomaly detection. In: ICLR (2024)
+\bibitem{promptad}
+Li, X., Zhang, Z., Tan, X., Chen, C., Qu, Y., Xie, Y., Ma, L.: PromptAD: Learning prompts with only normal samples for few-shot anomaly detection. In: CVPR, pp. 16838--16848 (2024)
+\bibitem{inctrl}
+Zhu, J., Pang, G.: Toward generalist anomaly detection via in-context residual learning with few-shot sample prompts. In: CVPR, pp. 17826--17836 (2024)
+\bibitem{anomalygpt}
+Gu, Z., Zhu, B., Zhu, G., Chen, Y., Tang, M., Wang, J.: AnomalyGPT: Detecting industrial anomalies using large vision-language models. In: AAAI, pp. 1932--1940 (2024)
+\bibitem{calibrationnn}
+Guo, C., Pleiss, G., Sun, Y., Weinberger, K.Q.: On calibration of modern neural networks. In: ICML, pp. 1321--1330 (2017)
+\bibitem{recalibmodern}
+Minderer, M., Djolonga, J., Romijnders, R., Hubis, F., Zhai, X., Houlsby, N., Lucic, M.: Revisiting the calibration of modern neural networks. In: NeurIPS (2021)
+\bibitem{openrealworld}
+Yang, Z., Yue, J., Ghamisi, P., Zhang, S., Ma, J., Fang, L.: Open set recognition in real world. International Journal of Computer Vision 132(8), 3208--3231 (2024)
+\bibitem{genoodsurvey}
+Yang, J., Zhou, K., Li, Y., Liu, Z.: Generalized out-of-distribution detection: A survey. International Journal of Computer Vision 132(12), 5635--5662 (2024)
+\bibitem{vadsurvey}
+Cao, Y., Xu, X., Zhang, J., Cheng, Y., Huang, X., Pang, G., Shen, W.: A survey on visual anomaly detection: Challenge, approach, and prospect. arXiv preprint arXiv:2401.16402 (2024)
+\bibitem{efficientad}
+Batzner, K., Heckler, L., Koenig, R.: EfficientAD: Accurate visual anomaly detection at millisecond-level latencies. In: WACV, pp. 127--137 (2024)
+\bibitem{faiss}
+Johnson, J., Douze, M., Jegou, H.: Billion-scale similarity search with GPUs. IEEE Transactions on Big Data 7, 535--547 (2021)
+\bibitem{imagenet}
+Deng, J., Dong, W., Socher, R., Li, L.-J., Li, K., Fei-Fei, L.: ImageNet: A large-scale hierarchical image database. In: CVPR, pp. 248--255 (2009)
+\bibitem{wideresnet}
+Zagoruyko, S., Komodakis, N.: Wide residual networks. In: BMVC (2016)
+\bibitem{mvtecad}
+Bergmann, P., Fauser, M., Sattlegger, D., Steger, C.: MVTec AD: A comprehensive real-world dataset for unsupervised anomaly detection. In: CVPR, pp. 9584--9592 (2019)
+\end{thebibliography}
+\end{adjustwidth}
+
+\end{document}
